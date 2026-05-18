@@ -120,10 +120,21 @@ New clones only need `npm install` at the repository root.
 
 ### Planned customizations (TODO in code)
 
-- Create Account provisioning customization
-- Call external endpoints
-- Calculate / enrich attributes
-- Return modified payloads per the SailPoint customizer pattern
+- Continue hardening the Create Account customization after tenant validation
+- Add focused tests for OrganizationalUnit lookup behavior
+- Replace temporary diagnostic logging with production-safe messages where needed
+
+### Current Create Account behavior
+
+`beforeStdAccountCreate` now enriches Create Account payloads before the Web Services connector submits them:
+
+- Reads the Web Services base URL and Create Account `Authorization` header from the SailPoint customizer runtime config.
+- Requires `contractSiteCode` and `actualLocationCode` in the account create attributes.
+- Computes the organizational unit name as `<contractSiteCode>-<actualLocationCode>`.
+- Calls `/api/odata/businessobject/organizationalunits` and selects `RecId` for the matching organizational unit.
+- Writes the resolved `RecId` to `input.attributes.OrganizationalUnit`, then returns the modified payload.
+
+If required configuration, input attributes, or the organizational unit lookup result are missing, the customizer throws a `ConnectorError` to stop provisioning with a clear failure reason.
 
 ## Build and package
 
@@ -196,7 +207,7 @@ Document the connector source name, customizer version, and link date here when 
 |------|--------|
 | ISC environment | `uat` (example) |
 | Connector source | _TBD_ |
-| Customizer version | `0.1.0` (from `package.json`) |
+| Customizer version | `1.0.1` (from `package.json`) |
 | Linked on | _TBD_ |
 
 ## Security notes
@@ -204,6 +215,7 @@ Document the connector source name, customizer version, and link date here when 
 - **Never commit** PAT secrets, `.env` files, `node_modules/`, `dist/`, packaged `*.zip` files, or local SailPoint CLI credential stores.
 - Store PAT **Client ID** and **Client Secret** only via `sail set pat` or CI secrets (for example `SAIL_CLIENT_ID`, `SAIL_CLIENT_SECRET`, `SAIL_BASE_URL`); see [CLI environment variables](https://developer.sailpoint.com/docs/tools/cli/#environment-variable-configuration).
 - Do not log sensitive connector configuration or tokens from `readConfig()` in production handlers.
+- Review Create Account diagnostic logs before production use; account attributes can contain sensitive identity data.
 - Review packaged artifacts before upload; ensure test mocks and sample secrets in `src/index.spec.ts` are not shipped as real credentials.
 - Limit PAT scopes and rotate tokens according to your organization’s security policy.
 - Use the sandbox tenant (`lynxeogroup-sb`) for development; validate in non-production before production deployment.
