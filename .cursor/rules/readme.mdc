@@ -1,0 +1,28 @@
+---
+description: Keep README.md accurate when project setup or workflows change
+globs: package.json,src/**,README.md,.gitignore
+alwaysApply: false
+---
+
+# README maintenance
+
+When you change any of the following, update `README.md` in the same change (or immediately after):
+
+- `package.json` scripts, name, or version
+- Prerequisites or SailPoint CLI / tenant configuration
+- Build, test, or packaging workflow (`npm run *`, `spcx`, `ncc`)
+- Upload, link, or deployment steps for the customizer
+- Security or gitignore rules for secrets and artifacts
+- Project purpose, TODO scope, or connector target
+
+Keep sections aligned with the current README outline:
+
+1. Project purpose
+2. Prerequisites
+3. Setup steps
+4. Local development
+5. Build/package
+6. Upload/linking placeholders (fill in TBD tables when known)
+7. Security notes
+
+Do not remove the "Maintaining this document" callout at the top of the README.
