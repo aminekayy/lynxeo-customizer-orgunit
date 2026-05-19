@@ -126,15 +126,18 @@ New clones only need `npm install` at the repository root.
 
 ### Current Create Account behavior
 
-`beforeStdAccountCreate` now enriches Create Account payloads before the Web Services connector submits them:
+`beforeStdAccountCreate` enriches Create Account payloads before the Web Services connector submits them:
 
 - Reads the Web Services base URL and Create Account `Authorization` header from the SailPoint customizer runtime config.
-- Requires `contractSiteCode` and `actualLocationCode` in the account create attributes.
-- Computes the organizational unit name as `<contractSiteCode>-<actualLocationCode>`.
+- Sets `input.attributes.OrganizationalUnit` to an empty value by default.
+- Uses `contractSiteCode` and `actualLocationCode` when both are present.
+- Skips the lookup and leaves `OrganizationalUnit` empty when either value is missing or blank.
+- Computes the organizational unit name as `<contractSiteCode>-<actualLocationCode>` when both values are present.
 - Calls `/api/odata/businessobject/organizationalunits` and selects `RecId` for the matching organizational unit.
-- Writes the resolved `RecId` to `input.attributes.OrganizationalUnit`, then returns the modified payload.
+- Writes the resolved `RecId` to `input.attributes.OrganizationalUnit` only when the lookup returns HTTP 200 with a non-empty `RecId`.
+- Leaves `OrganizationalUnit` empty if the lookup fails, returns a non-200 response, or does not include a usable `RecId`.
 
-If required configuration, input attributes, or the organizational unit lookup result are missing, the customizer throws a `ConnectorError` to stop provisioning with a clear failure reason.
+If the account create payload itself has no `attributes` object, the customizer throws a `ConnectorError` because there is no payload to enrich.
 
 ## Build and package
 

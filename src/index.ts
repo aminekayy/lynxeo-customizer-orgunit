@@ -38,23 +38,6 @@ export const connectorCustomizer = async () => {
     
     const authorization = createAccountOperation?.header?.Authorization
     
-    if (!baseUrl) {
-      throw new ConnectorError('Missing genericWebServiceBaseUrl in customizer runtime config')
-    }
-    
-    if (!authorization) {
-      throw new ConnectorError('Missing Authorization header from Create Account operation')
-    }
-    
-    const httpClient = createConnectorHttpClient({
-        baseURL: baseUrl,
-        headers: {
-            Authorization: authorization,
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-      })
-    
     return createConnectorCustomizer()
     .beforeStdAccountCreate(async (context: Context, input: StdAccountCreateInput) => {
         //logger.info('Running beforeStdAccountCreate customizer')
@@ -64,46 +47,61 @@ export const connectorCustomizer = async () => {
           throw new ConnectorError('Missing attributes in account create input')
         }
   
-        const contractSiteCode = input.attributes.contractSiteCode
-        const actualLocationCode = input.attributes.actualLocationCode
+        input.attributes.OrganizationalUnit = ''
+
+        const contractSiteCode = String(input.attributes.contractSiteCode ?? '').trim()
+        const actualLocationCode = String(input.attributes.actualLocationCode ?? '').trim()
         logger.info(`contractSiteCode present: ${Boolean(contractSiteCode)}`)
         logger.info(`actualLocationCode present: ${Boolean(actualLocationCode)}`)
-  
-        if (!contractSiteCode || String(contractSiteCode).trim() === '') {
-          throw new ConnectorError('Missing required attribute: contractSiteCode')
+
+        if (!contractSiteCode || !actualLocationCode) {
+          logger.info('Skipping OrganizationalUnit lookup because contractSiteCode or actualLocationCode is empty')
+          return input
         }
-  
-        if (!actualLocationCode || String(actualLocationCode).trim() === '') {
-          throw new ConnectorError('Missing required attribute: actualLocationCode')
+
+        if (!baseUrl || !authorization) {
+          logger.info('Skipping OrganizationalUnit lookup because base URL or Authorization header is missing')
+          return input
         }
-  
-        const organizationalUnitName =
-          `${String(contractSiteCode).trim()}-${String(actualLocationCode).trim()}`
+
+        const httpClient = createConnectorHttpClient({
+          baseURL: baseUrl,
+          headers: {
+            Authorization: authorization,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+        })
+
+        const organizationalUnitName = `${contractSiteCode}-${actualLocationCode}`
   
         logger.info('Computed OrganizationalUnit name from contractSiteCode and actualLocationCode')
   
         const filter = `Name eq '${organizationalUnitName.replace(/'/g, "''")}'`
   
-        const response = await httpClient.get(
-          '/api/odata/businessobject/organizationalunits',
-          {
-            params: {
-              '$filter': filter,
-              '$select': 'RecId',
-            },
-          }
-        )
-  
-        const recId = response?.data?.value?.[0]?.RecId
-  
-        if (!recId || String(recId).trim() === '') {
-          throw new ConnectorError(
-            `No OrganizationalUnit RecId found for computed OrganizationalUnit name`
+        try {
+          const response = await httpClient.get(
+            '/api/odata/businessobject/organizationalunits',
+            {
+              params: {
+                '$filter': filter,
+                '$select': 'RecId',
+              },
+            }
           )
+
+          const recId = response?.status === 200 ? response.data?.value?.[0]?.RecId : undefined
+
+          if (recId && String(recId).trim() !== '') {
+            input.attributes.OrganizationalUnit = recId
+            logger.info(`OrganizationalUnit RecId resolved: ${Boolean(recId)}`)
+          } else {
+            logger.info('OrganizationalUnit lookup did not return a 200 response with a RecId')
+          }
+        } catch (error) {
+          logger.info('OrganizationalUnit lookup failed; leaving OrganizationalUnit empty')
         }
   
-        input.attributes.OrganizationalUnit = recId
-        logger.info(`OrganizationalUnit RecId resolved: ${Boolean(recId)}`)
         //logger.info('OrganizationalUnit RecId resolved and added to account create input')
         logger.info(`Create account input after customizer: ${JSON.stringify(input.attributes)}`)
   
