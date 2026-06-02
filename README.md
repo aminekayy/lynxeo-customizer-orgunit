@@ -120,8 +120,9 @@ New clones only need `npm install` at the repository root.
 
 ### Planned customizations (TODO in code)
 
-- Continue hardening the Create Account customization after tenant validation
-- Add focused tests for OrganizationalUnit lookup behavior
+- Continue hardening Create Account and Account Update behavior after tenant validation
+- Add focused tests for OrgUnitLink lookup behavior on create and update
+- Confirm whether Account Update runtime payloads include current account `attributes` for fallback values
 - Replace temporary diagnostic logging with production-safe messages where needed
 
 ### Current Create Account behavior
@@ -129,15 +130,59 @@ New clones only need `npm install` at the repository root.
 `beforeStdAccountCreate` enriches Create Account payloads before the Web Services connector submits them:
 
 - Reads the Web Services base URL and Create Account `Authorization` header from the SailPoint customizer runtime config.
-- Sets `input.attributes.OrganizationalUnit` to an empty value by default.
+- Sets `input.attributes.OrgUnitLink` to an empty value by default.
 - Uses `contractSiteCode` and `actualLocationCode` when both are present.
-- Skips the lookup and leaves `OrganizationalUnit` empty when either value is missing or blank.
+- Skips the OrgUnit lookup and leaves `OrgUnitLink` empty when either value is missing or blank.
 - Computes the organizational unit name as `<contractSiteCode>-<actualLocationCode>` when both values are present.
 - Calls `/api/odata/businessobject/organizationalunits` and selects `RecId` for the matching organizational unit.
-- Writes the resolved `RecId` to `input.attributes.OrganizationalUnit` only when the lookup returns HTTP 200 with a non-empty `RecId`.
-- Leaves `OrganizationalUnit` empty if the lookup fails, returns a non-200 response, or does not include a usable `RecId`.
+- Writes the resolved OrgUnit `RecId` to `input.attributes.OrgUnitLink` only when the lookup returns HTTP 200 with a non-empty `RecId`.
+- Leaves `OrgUnitLink` empty if the lookup fails, returns a non-200 response, or does not include a usable `RecId`.
 
 If the account create payload itself has no `attributes` object, the customizer throws a `ConnectorError` because there is no payload to enrich.
+
+### Current Account Update behavior
+
+`beforeStdAccountUpdate` resolves the Ivanti employee `RecId` and enriches OrgUnit changes when location data changes:
+
+- Resolves the employee `RecId` from the account `identity`/LoginID via `/api/odata/businessobject/employees`.
+- Adds or updates a `RecId` change with `op: Set` before the connector sends the update payload.
+- Runs the OrgUnitLink lookup only when `actualLocationCode` or `contractSiteCode` appears in `input.changes`.
+- Uses the newest value from `input.changes` for changed attributes.
+- Falls back to current account `attributes` when one of the two source values is not part of the current change payload, if SailPoint includes those attributes in the update runtime payload.
+- Computes the organizational unit name as `<contractSiteCode>-<actualLocationCode>` when both source values are available.
+- Calls `/api/odata/businessobject/organizationalunits` and selects `RecId` for the matching organizational unit.
+- Adds or updates an `OrgUnitLink` change with `op: Set` using the SailPoint SDK `AttributeChangeOp.Set` enum only when a non-empty OrgUnit `RecId` is resolved.
+- Leaves the original update payload unchanged if either source value is missing, the lookup fails, returns non-200, or does not include a usable `RecId`.
+
+### Current Enable Account behavior
+
+Enable Account is handled in two steps:
+
+- `beforeStdAccountEnable` captures the LoginID from `input.key.simple.id` or `input.identity`.
+- `Enable Account:before` resolves the employee `RecId` from that LoginID.
+- The outbound Web Services request URL is rewritten to `/api/odata/businessobject/employees('<RecId>')`.
+- The request body is replaced with `{"Status":"Active","Disabled":false}`.
+- A `ConnectorError` is thrown if the LoginID cannot be captured or the employee `RecId` cannot be resolved.
+
+### Current Disable Account behavior
+
+Disable Account follows the same RecId-based URL rewrite as Enable Account:
+
+- `beforeStdAccountDisable` captures the LoginID from `input.key.simple.id` or `input.identity`.
+- `Disable Account:before` resolves the employee `RecId` from that LoginID.
+- The outbound Web Services request URL is rewritten to `/api/odata/businessobject/employees('<RecId>')`.
+- The request body is replaced with `{"Status":"Terminated","Disabled":true}`.
+- A `ConnectorError` is thrown if the LoginID cannot be captured or the employee `RecId` cannot be resolved.
+
+### Current Single Account Aggregation behavior
+
+Single Account Aggregation rewrites the read request so Ivanti is queried by LoginID:
+
+- `beforeStdAccountRead` captures the LoginID from `input.identity` or `input.key.simple.id`.
+- `Single Account Aggregation:before` builds the final request URL as `/api/odata/businessobject/employees?$filter=loginID eq '<LoginID>'`.
+- If no LoginID was captured directly for the read, it can reuse the LoginID captured during the preceding Enable or Disable Account flow.
+- The captured LoginID variables are cleared after the URL is rewritten.
+- A `ConnectorError` is thrown if no LoginID is available or `genericWebServiceBaseUrl` is missing.
 
 ## Build and package
 
@@ -210,7 +255,7 @@ Document the connector source name, customizer version, and link date here when 
 |------|--------|
 | ISC environment | `uat` (example) |
 | Connector source | _TBD_ |
-| Customizer version | `1.0.1` (from `package.json`) |
+| Customizer version | `1.2.2` (from `package.json`) |
 | Linked on | _TBD_ |
 
 ## Security notes
@@ -218,7 +263,7 @@ Document the connector source name, customizer version, and link date here when 
 - **Never commit** PAT secrets, `.env` files, `node_modules/`, `dist/`, packaged `*.zip` files, or local SailPoint CLI credential stores.
 - Store PAT **Client ID** and **Client Secret** only via `sail set pat` or CI secrets (for example `SAIL_CLIENT_ID`, `SAIL_CLIENT_SECRET`, `SAIL_BASE_URL`); see [CLI environment variables](https://developer.sailpoint.com/docs/tools/cli/#environment-variable-configuration).
 - Do not log sensitive connector configuration or tokens from `readConfig()` in production handlers.
-- Review Create Account diagnostic logs before production use; account attributes can contain sensitive identity data.
+- Review Create Account and Account Update diagnostic logs before production use; account attributes can contain sensitive identity data.
 - Review packaged artifacts before upload; ensure test mocks and sample secrets in `src/index.spec.ts` are not shipped as real credentials.
 - Limit PAT scopes and rotate tokens according to your organization’s security policy.
 - Use the sandbox tenant (`lynxeogroup-sb`) for development; validate in non-production before production deployment.
